@@ -4,6 +4,7 @@ namespace JobService.Service
     using System.Linq;
     using System.Threading.Tasks;
     using Components;
+    using Filters;
     using JobService.Components;
     using Marten;
     using MassTransit;
@@ -35,7 +36,12 @@ namespace JobService.Service
 
         public void ConfigureServices(IServiceCollection services)
         {
-            services.AddControllers();
+            services.AddScoped<Token>();
+            services.AddScoped<TokenActionFilter>();
+            services.AddControllers(options =>
+            {
+                options.Filters.Add<TokenActionFilter>();
+            });
 
             services.AddMarten(options =>
             {
@@ -70,8 +76,11 @@ namespace JobService.Service
                     if (IsRunningInContainer)
                         cfg.Host("rabbitmq");
 
-                    cfg.UseMessageScope(context); // This causes the job to ultimately fail
                     cfg.UseDelayedMessageScheduler();
+                    
+                    cfg.UseSendFilter(typeof(TokenSendFilter<>), context);
+                    cfg.UsePublishFilter(typeof(TokenPublishFilter<>), context);
+                    cfg.UseConsumeFilter(typeof(TokenConsumeFilter<>), context);
 
                     var options = new ServiceInstanceOptions()
                         .SetEndpointNameFormatter(context.GetService<IEndpointNameFormatter>() ?? KebabCaseEndpointNameFormatter.Instance);
