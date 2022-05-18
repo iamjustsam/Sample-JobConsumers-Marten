@@ -2,17 +2,15 @@ namespace JobService.Service
 {
     using System;
     using System.Linq;
-    using System.Reflection;
     using System.Threading.Tasks;
     using Components;
     using JobService.Components;
+    using Marten;
     using MassTransit;
-    using MassTransit.EntityFrameworkCoreIntegration;
     using Microsoft.AspNetCore.Builder;
     using Microsoft.AspNetCore.Diagnostics.HealthChecks;
     using Microsoft.AspNetCore.Hosting;
     using Microsoft.AspNetCore.Http;
-    using Microsoft.EntityFrameworkCore;
     using Microsoft.Extensions.Configuration;
     using Microsoft.Extensions.DependencyInjection;
     using Microsoft.Extensions.Diagnostics.HealthChecks;
@@ -39,12 +37,14 @@ namespace JobService.Service
         {
             services.AddControllers();
 
-            services.AddDbContext<JobServiceSagaDbContext>(builder =>
-                builder.UseNpgsql(Configuration.GetConnectionString("JobService"), m =>
-                {
-                    m.MigrationsAssembly(Assembly.GetExecutingAssembly().GetName().Name);
-                    m.MigrationsHistoryTable($"__{nameof(JobServiceSagaDbContext)}");
-                }));
+            services.AddMarten(options =>
+            {
+                options.Connection(Configuration.GetConnectionString("JobService"));
+
+                options.Schema.For<JobSaga>().Identity(x => x.CorrelationId);
+                options.Schema.For<JobTypeSaga>().Identity(x => x.CorrelationId);
+                options.Schema.For<JobAttemptSaga>().Identity(x => x.CorrelationId);
+            });
 
             services.AddMassTransit(x =>
             {
@@ -55,23 +55,11 @@ namespace JobService.Service
                 x.AddConsumer<VideoConvertedConsumer>();
 
                 x.AddSagaRepository<JobSaga>()
-                    .EntityFrameworkRepository(r =>
-                    {
-                        r.ExistingDbContext<JobServiceSagaDbContext>();
-                        r.LockStatementProvider = new PostgresLockStatementProvider();
-                    });
+                    .MartenRepository(Configuration.GetConnectionString("JobService"));
                 x.AddSagaRepository<JobTypeSaga>()
-                    .EntityFrameworkRepository(r =>
-                    {
-                        r.ExistingDbContext<JobServiceSagaDbContext>();
-                        r.LockStatementProvider = new PostgresLockStatementProvider();
-                    });
+                    .MartenRepository(Configuration.GetConnectionString("JobService"));
                 x.AddSagaRepository<JobAttemptSaga>()
-                    .EntityFrameworkRepository(r =>
-                    {
-                        r.ExistingDbContext<JobServiceSagaDbContext>();
-                        r.LockStatementProvider = new PostgresLockStatementProvider();
-                    });
+                    .MartenRepository(Configuration.GetConnectionString("JobService"));
 
                 x.AddRequestClient<ConvertVideo>();
 
@@ -82,6 +70,7 @@ namespace JobService.Service
                     if (IsRunningInContainer)
                         cfg.Host("rabbitmq");
 
+                    cfg.UseMessageScope(context); // This causes the job to ultimately fail
                     cfg.UseDelayedMessageScheduler();
 
                     var options = new ServiceInstanceOptions()
